@@ -19,6 +19,11 @@ if ($mysqli->connect_errno) {
 
 $db = new Database($mysqli);
 $test = new DatabaseTest($db);
-$test->testBuildQuery();
+try{
+    $test->testBuildQuery();
+}catch(Exception $e){
+    echo $e->getMessage(), PHP_EOL;
+    exit('Not OK');
+}
 
 exit('OK');

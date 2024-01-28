@@ -53,7 +53,7 @@ class DatabaseTest
         if ($results !== $correct) {
             throw new Exception('Failure.');
         }
-        
+
         //дополнительно от себя
         $results = [];
 
@@ -64,6 +64,11 @@ class DatabaseTest
             'SELECT name FROM users WHERE `user_id` IN (1, 2, 3)',
             'SELECT name FROM users WHERE `block` = 1',
             'SELECT name FROM users WHERE `block` = 1 limit 1',
+            'UPDATE `users` SET `name` = \'Jack\', `email` = NULL WHERE `role_id` = 5 AND `region` = \'world\'',
+            'SELECT name FROM users WHERE `block` = 1 AND `role_id` = 777 AND active = 0',
+            'SELECT name FROM users WHERE `block` = 1 AND `role_id` = 777 AND active = 0',
+            'SELECT name FROM users WHERE `block` = 1 AND `role_id` = 777 AND active = 0',
+
         ];
 
         $results[] = $this->db->buildQuery(
@@ -80,27 +85,42 @@ class DatabaseTest
             'UPDATE users SET ?a WHERE user_id = -1',
             [['order_id' => 5, 'email' => null]]
         );
-        foreach ([true] as $block) {
-            $results[] = $this->db->buildQuery(
-                'SELECT name FROM users WHERE ?# IN (?a) {{AND block = ?d}}',
-                ['user_id', [1, 2, 3], $block]
-            );
-        }
-        foreach ([true] as $block) {
-            $results[] = $this->db->buildQuery(
-                'SELECT name FROM users WHERE ?# = ?d {{AND block = ?d}}',
-                ['block', $block, $block]
-            );
-        }
 
-        foreach ([true] as $block) {
-            $results[] = $this->db->buildQuery(
-                'SELECT name FROM users WHERE ?# = ?d {{AND block = ?d} {AND block = ?d}} limit ?d',
-                ['block', $block, $block, $block, 1]
-            );
-        }
+        $results[] = $this->db->buildQuery(
+            'SELECT name FROM users WHERE ?# IN (?a) {{AND block = ?d}}',
+            ['user_id', [1, 2, 3], true]
+        );
 
-        
+        $results[] = $this->db->buildQuery(
+            'SELECT name FROM users WHERE ?# = ?d {{AND block = ?d}}',
+            ['block', true, true]
+        );
+
+        $results[] = $this->db->buildQuery(
+            'SELECT name FROM users WHERE ?# = ?d {{AND block = ?d} {AND block = ?d}} limit ?d',
+            ['block', true, true, true, 1]
+        );
+
+        $results[] = $this->db->buildQuery(
+            'UPDATE ?# SET ?a WHERE ?a AND ?# = ?',
+            [['users'], ['name' => 'Jack', 'email' => null], ['role_id' => 5], 'region', 'world']
+        );
+
+        $results[] = $this->db->buildQuery(
+            'SELECT name FROM users WHERE ?# = ?d {AND ?# = ?d} {AND active = ?d}',
+            ['block', true, 'role_id', 777, 0]
+        );
+
+        $results[] = $this->db->buildQuery(
+            'SELECT name FROM users WHERE ?# = ?d {AND ?#} {AND active = ?d}',
+            ['block', true, ['role_id' => 777], 0]
+        );
+
+        $results[] = $this->db->buildQuery(
+            'SELECT name FROM users WHERE ?# = ?d {AND status_id = ?d} {AND ?#} AND active = ?d',
+            ['block', true,  ParameterType::SKIP, ['role_id' => 777], 0]
+        );
+
         if ($results !== $correct) {
             throw new Exception('Failure.');
         }

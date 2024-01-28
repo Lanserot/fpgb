@@ -5,16 +5,19 @@ namespace FpDbTest;
 use Exception;
 use mysqli;
 
+
 class Database implements DatabaseInterface
 {
     const IDENTIFIER_PATTERN = '/\?d|\?f|\?a|\?#|\?/';
     const NESTED_BLOCKS_PATTERN = '/\{.*?\{.*?\}.*?\}/s';
 
     private mysqli $mysqli;
+    private DatabaseFormatter $formatter;
 
     public function __construct(mysqli $mysqli)
     {
         $this->mysqli = $mysqli;
+        $this->formatter = new DatabaseFormatter($mysqli);
     }
 
     /**
@@ -22,35 +25,30 @@ class Database implements DatabaseInterface
      */
     protected function processNestedBlocks(string $query, array &$args): string
     {
-        if (preg_match(self::NESTED_BLOCKS_PATTERN, $query) == false) {
+        if (!preg_match(self::NESTED_BLOCKS_PATTERN, $query)) {
             return $query;
         }
 
-        //Получаем последнее схождение
-        preg_match_all(self::NESTED_BLOCKS_PATTERN, $query, $blocks);
-        preg_match_all(self::IDENTIFIER_PATTERN, end(current($blocks)), $argsDel);
-        $argsDel = current($argsDel);
-
         //Замена для удаления неподходящих значений
-        $changeQuery = preg_replace_callback('/\{([^}]*)\}/', function ($matches) use (&$values) {
-            return preg_replace(self::IDENTIFIER_PATTERN, ParameterType::SKIP, $matches[1]);
+        $changeQuery = preg_replace_callback(self::NESTED_BLOCKS_PATTERN, function ($matches) {
+            return preg_replace(self::IDENTIFIER_PATTERN, ParameterType::SKIP, end($matches));
         }, $query);
 
-        preg_match_all('/\?d|\?f|\?a|\?#|\?|' . ParameterType::SKIP . '/', $changeQuery, $skipsArg);
-        $skipsArg = current($skipsArg);
-
-        if (count($skipsArg) != count($args)) {
+        preg_match_all('/\?d|\?f|\?a|\?#|\?|' . ParameterType::SKIP . '/', $changeQuery, $skipsMatch);
+        $skipsMatch = current($skipsMatch);
+     
+        if (count($skipsMatch) != count($args)) {
             throw new Exception('Разная длинна значений после нахождения вложенного блока');
         }
 
         $newArg = [];
         //Откидываю skip аргументы
-        for ($i = 0; $i < count($skipsArg); $i++) {
-            if ($skipsArg[$i] !== ParameterType::SKIP) {
+        for ($i = 0; $i < count($skipsMatch); $i++) {
+            if ($skipsMatch[$i] !== ParameterType::SKIP) {
                 $newArg[] = $args[$i];
             }
         }
-
+ 
         $args = $newArg;
 
         //Удаляю вложенные блоки и обрезаю пробелы
@@ -71,30 +69,22 @@ class Database implements DatabaseInterface
         }
 
         $matchToArg = [];
-        for ($i = 0; $i < count($matches); $i++) {
-            $matchToArg[] = [
-                'match' => $matches[$i],
-                'arg' => $args[$i],
-            ];
-        }
-
-        foreach ($matchToArg as $k => $v) {
-            if ($v['match'] == ParameterType::STRING && is_array($v['arg'])) {
-                throw new Exception('Неверный аргумент');
-            }
-            if ($v['arg'] === ParameterType::SKIP) {
-                $query = str_replace($k, '', $query);
+        foreach($args as $k => $arg){
+            if ($arg === ParameterType::SKIP) {
                 $query = preg_replace('/\{.*?\}/s', '', $query, 1);
                 continue;
             }
+
+            $matchToArg[] = [
+                'match' => $matches[$k],
+                'arg' => $args[$k],
+            ];
         }
 
         $this->processPlaceholder($matchToArg, $query);
 
-        $query = str_replace(['{', '}'], '', $query);
-        $query = preg_replace('/\s{2,}/', ' ', $query);
-
-        return $query;
+        //чищу запрос от блоков и пробелов
+        return preg_replace('/\s{2,}/', ' ', str_replace(['{', '}'], '', $query));
     }
 
     /**
@@ -118,15 +108,17 @@ class Database implements DatabaseInterface
                     break;
                 case ParameterType::STRING:
                     if (is_array($arg)) throw new Exception($errText);
-                    $arg = $this->formateValue($arg);
+                    $arg = $this->getFormatter()->value($arg);
                     break;
                 case ParameterType::ARRAY:
                     if (!is_array($arg)) throw new Exception($errText);
-                    $arg = $this->formateArrayParameter($arg);
+                    $arg = $this->getFormatter()->arrayParameter($arg);
                     break;
                 case ParameterType::IDENTIFIER:
                     if (!is_array($arg) && !is_string($arg)) throw new Exception($errText);
-                    $arg = is_array($arg) ? $this->formateArrayParameter($arg, true) : $this->formateParameter($arg);
+                    $arg = is_array($arg)
+                        ? $this->getFormatter()->arrayParameter($arg, true)
+                        : $this->getFormatter()->parameter($arg);
                     break;
             }
 
@@ -135,40 +127,13 @@ class Database implements DatabaseInterface
         }
     }
 
-    public function skip()
+    public function skip(): string
     {
         return ParameterType::SKIP;
     }
 
-    protected function formateArrayParameter(array $array, bool $processIdentifiers = false): string
+    public function getFormatter(): DatabaseFormatter
     {
-        $result = [];
-
-        foreach ($array as $k => $v) {
-            if (is_int($k)) {
-                $result[] = $processIdentifiers ? $this->formateParameter($v) : $this->formateValue($v);
-            } else {
-                $result[] = $this->formateParameter($k) . ' = ' . $this->formateValue($v); //+
-            }
-        }
-
-        return implode(', ', $result);
-    }
-
-    protected function formateParameter($value): string
-    {
-        return '`' . $value . '`';
-    }
-    
-    protected function formateValue($value): string
-    {
-        if ($value === null) {
-            return 'NULL';
-        }
-
-        if (is_int($value) || is_float($value) || is_bool($value)) {
-            return $this->mysqli->real_escape_string($value);
-        }
-        return '\'' . $this->mysqli->real_escape_string($value) . '\'';
+        return $this->formatter;
     }
 }
